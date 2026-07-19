@@ -291,20 +291,31 @@ function initGoogleMaps() {
 function getGoogleRoute(origin, dest) {
   return new Promise((resolve) => {
     if (!googleReady) { resolve(null); return; }
-    directionsService.route({
-      origin: new google.maps.LatLng(origin.lat, origin.lng),
-      destination: new google.maps.LatLng(dest.lat, dest.lng),
-      travelMode: 'DRIVING',
-      drivingOptions: { departureTime: new Date(), trafficModel: 'bestguess' },
-    }, (result, status) => {
-      if (status === 'OK') {
-        const leg = result.routes[0].legs[0];
-        const seconds = (leg.duration_in_traffic ? leg.duration_in_traffic.value : leg.duration.value);
-        resolve({ minutes: seconds / 60, km: leg.distance.value / 1000 });
-      } else {
-        resolve(null);
-      }
-    });
+    try {
+      directionsService.route({
+        origin: new google.maps.LatLng(origin.lat, origin.lng),
+        destination: new google.maps.LatLng(dest.lat, dest.lng),
+        travelMode: google.maps.TravelMode.DRIVING,
+        drivingOptions: { departureTime: new Date(), trafficModel: google.maps.TrafficModel.BEST_GUESS },
+      }, (result, status) => {
+        try {
+          if (status === 'OK') {
+            const leg = result.routes[0].legs[0];
+            const seconds = (leg.duration_in_traffic ? leg.duration_in_traffic.value : leg.duration.value);
+            resolve({ minutes: seconds / 60, km: leg.distance.value / 1000 });
+          } else {
+            console.warn('Directions request failed with status:', status);
+            resolve(null);
+          }
+        } catch (err) {
+          console.error('getGoogleRoute callback error:', err);
+          resolve(null);
+        }
+      });
+    } catch (err) {
+      console.error('getGoogleRoute route() call threw:', err);
+      resolve(null);
+    }
   });
 }
 
@@ -421,11 +432,20 @@ async function updateResults() {
   const eligible = DATA.hospitals.filter(h => state.emergencyType !== 'trauma' || h.trauma);
   const distMatrix = DATA.distance_matrix[state.incidentNode] || {};
 
-  // ETA + distance: use live Google traffic route if configured, else fall back to simulated data
+  // ETA + distance: use live Google traffic route if configured, else fall back to simulated data.
+  // Wrapped defensively: if Google routing fails for any reason, fall back rather than freezing the panel.
   let routes;
-  if (googleReady) {
-    routes = await Promise.all(eligible.map(h => getGoogleRoute(state.incident, { lat: h.lat, lng: h.lon })));
-  } else {
+  try {
+    if (googleReady) {
+      routes = await Promise.all(eligible.map(h => getGoogleRoute(state.incident, { lat: h.lat, lng: h.lon })));
+    } else {
+      routes = eligible.map(h => ({
+        minutes: routeData[h.id] != null ? routeData[h.id] : 999,
+        km: distMatrix[h.id] != null && distMatrix[h.id] >= 0 ? distMatrix[h.id] : null,
+      }));
+    }
+  } catch (err) {
+    console.error('Live routing failed, falling back to simulated ETA:', err);
     routes = eligible.map(h => ({
       minutes: routeData[h.id] != null ? routeData[h.id] : 999,
       km: distMatrix[h.id] != null && distMatrix[h.id] >= 0 ? distMatrix[h.id] : null,
