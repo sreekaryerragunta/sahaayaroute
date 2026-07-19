@@ -73,6 +73,17 @@ def precompute_routing_by_hour_daytype(traffic_model, G, node_order, idx, A_norm
     return out
 
 
+def precompute_distance_matrix(G, node_order):
+    """Static shortest-path distance (km) from every node to every hospital, independent of time/congestion."""
+    from data.road_network import nearest_node
+    hospital_nodes = {h["id"]: nearest_node(h["lat"], h["lon"]) for h in HOSPITALS}
+    lengths = dict(nx.all_pairs_dijkstra_path_length(G, weight="distance_km"))
+    out = {}
+    for origin in node_order:
+        out[origin] = {hid: round(lengths[origin].get(hnode, -1), 1) for hid, hnode in hospital_nodes.items()}
+    return out
+
+
 def main():
     occupancy_df = pd.read_csv(os.path.join(BASE, "data", "occupancy_timeseries.csv"))
     capacity_model = load_capacity_model()
@@ -84,12 +95,16 @@ def main():
     print("Precomputing traffic-aware routing...")
     routing_by_hour = precompute_routing_by_hour_daytype(traffic_model, G, node_order, idx, A_norm, static_feats)
 
+    print("Precomputing distance matrix...")
+    distance_matrix = precompute_distance_matrix(G, node_order)
+
     dashboard_data = {
         "hospitals": HOSPITALS,
         "nodes": {name: {"lat": lat, "lon": lon} for name, (lat, lon) in NODES.items()},
         "bottlenecks": list(CHRONIC_BOTTLENECKS),
         "capacity_by_hour_daytype": capacity_by_hour,
         "routing_by_hour_daytype": routing_by_hour,
+        "distance_matrix": distance_matrix,
     }
 
     def default(o):
