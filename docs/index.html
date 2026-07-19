@@ -306,8 +306,18 @@ function initGoogleMaps() {
   }
 })();
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => {
+      console.warn(`${label} timed out after ${ms}ms, falling back`);
+      resolve(null);
+    }, ms)),
+  ]);
+}
+
 function getGoogleRoute(origin, dest) {
-  return new Promise((resolve) => {
+  return withTimeout(new Promise((resolve) => {
     if (!googleReady) { resolve(null); return; }
     try {
       directionsService.route({
@@ -334,7 +344,7 @@ function getGoogleRoute(origin, dest) {
       console.error('getGoogleRoute route() call threw:', err);
       resolve(null);
     }
-  });
+  }), 6000, 'Directions request');
 }
 
 function googleMapsNavigateUrl(originLat, originLng, destLat, destLng) {
@@ -444,6 +454,8 @@ async function updateResults() {
   }
 
   const myRequestId = ++resultsRequestId; // guards against stale async results overwriting newer clicks
+  container.innerHTML = `<div id="empty-state">Calculating routes…</div>`;
+
   const key = `${state.hour}_${state.dayType}`;
   const capData = DATA.capacity_by_hour_daytype[key] || {};
   const routeData = (DATA.routing_by_hour_daytype[key] || {})[state.incidentNode] || {};
