@@ -320,6 +320,7 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+let directionsFailureReported = false;
 function getGoogleRoute(origin, dest) {
   return withTimeout(new Promise((resolve) => {
     if (!googleReady) { resolve(null); return; }
@@ -340,6 +341,10 @@ function getGoogleRoute(origin, dest) {
             resolve({ minutes: seconds / 60, km: leg.distance.value / 1000 });
           } else {
             console.warn('Directions request failed with status:', status);
+            if (!directionsFailureReported) {
+              directionsFailureReported = true;
+              showDebug('Google Directions failed with status: ' + status + '\nMost common cause: billing is not enabled on the Google Cloud project (Maps Platform requires it even on the free tier). Check Google Cloud Console \u2192 Billing.\nFalling back to simulated ETA for now.');
+            }
             resolve(null);
           }
         } catch (err) {
@@ -497,12 +502,21 @@ async function updateResults() {
   let candidates = eligible.map((h, i) => {
     const cap = capData[h.id];
     const occPct = cap ? cap.occ * 100 : 70;
-    const r = routes[i] || { minutes: 999, km: null };
+    let r = routes[i];
+    let etaIsLive = googleReady && r != null;
+    if (!r) {
+      // this specific hospital's live route failed/timed out -- fall back to the simulated model for it
+      r = {
+        minutes: routeData[h.id] != null ? routeData[h.id] : 999,
+        km: distMatrix[h.id] != null && distMatrix[h.id] >= 0 ? distMatrix[h.id] : null,
+      };
+      etaIsLive = false;
+    }
     const eta = r.minutes != null ? r.minutes : 999;
     const km = r.km;
     const availFrac = Math.max(0, 1 - occPct / 100);
     const score = availFrac * 0.6 - (eta / 60) * 0.4;
-    return { ...h, occPct, eta, km, score, availBeds: Math.round(availFrac * h.beds) };
+    return { ...h, occPct, eta, km, etaIsLive, score, availBeds: Math.round(availFrac * h.beds) };
   }).sort((a, b) => b.score - a.score).slice(0, 4);
 
   container.innerHTML = '';
@@ -511,7 +525,7 @@ async function updateResults() {
     card.className = 'rec-card' + (i === 0 ? ' top' : '');
     const color = occColor(c.occPct);
     const navUrl = googleMapsNavigateUrl(state.incident.lat, state.incident.lng, c.lat, c.lon, c.place_id);
-    const etaLabel = googleReady ? 'LIVE ETA' : 'ETA (sim)';
+    const etaLabel = c.etaIsLive ? 'LIVE ETA' : 'ETA (sim)';
     const distStr = (c.km != null) ? `${c.km.toFixed(1)} km` : '—';
     card.innerHTML = `
       <div class="rec-rank">#${i + 1}</div>
